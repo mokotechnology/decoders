@@ -1,0 +1,1 @@
+LW007-PIR: passive infrared-based LoRaWAN PIR sensor

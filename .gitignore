@@ -124,3 +124,6 @@ dist
 
 # .db file
 data
+
+*.DS_Store
+.DS_Store

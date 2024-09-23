@@ -1,6 +1,6 @@
 {
   "$schema": "../../../../schema/connector.json",
-  "name": "MOKO LW008-MT",
+  "name": "MOKO LW007-PIR",
   "images": {
     "logo": "./assets/logo.png"
   },

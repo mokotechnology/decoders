@@ -1,270 +1,402 @@
-/* eslint-disable no-plusplus */
-/* eslint-disable prettier/prettier */
-/*
- * LW001-BG-PRO
- */
-
-const packet_type = [
-  "heart",
-  "fix_success",
-  "fix_false",
-  "sys_close_info",
-  "shake_info",
-  "idle_info",
-  "demolish_alarm",
-  "event",
-  "battery_consume",
-  "config",
-  "store_data",
-  "limit_gps_data",
+var payloadTypeArray = ['Heartbeat', 'Location Fixed', 'Location Failure', 'Shutdown', 'Shock', 'Man Down detection', 'Tamper Alarm', 'Event Message', 'Battery Consumption', '', '', 'GPS Limit'];
+var operationModeArray = ['Standby mode', 'Periodic mode', 'Timing mode', 'Motion mode'];
+var rebootReasonArray = ['Restart after power failure', 'Bluetooth command request', 'LoRaWAN command request', 'Power on after normal power off'];
+var positionTypeArray = ['WIFI positioning success', 'Bluetooth positioning success', 'GPS positioning success'];
+var posFailedReasonArray = [
+	'WIFI positioning time is not enough (The location payload reporting interval is set too short, please increase the report interval of the current working mode via MKLoRa app)',
+	'WIFI positioning strategies timeout (Please increase the WIFI positioning timeout via MKLoRa app)',
+	'WIFI module is not detected, the WIFI module itself works abnormally',
+	'Bluetooth positioning time is not enough (The location payload reporting interval is set too short, please increase the report interval of the current working mode via MKLoRa app)',
+	'Bluetooth positioning strategies timeout (Please increase the Bluetooth positioning timeout via MKLoRa app)',
+	'Bluetooth broadcasting in progress (Please reduce the Bluetooth broadcast timeout or avoid Bluetooth positioning when Bluetooth broadcasting in process via MKLoRa app)',
+	'GPS position time budget over (Pls increase the GPS budget via MKLoRa app)',
+	'GPS coarse positioning timeout (Pls increase coarse positioning timeout or increase coarse accuracy target via MKLoRa app)',
+	'GPS fine positioning timeout (Pls increase fine positioning timeout or increase fine accuracy target via MKLoRa app)',
+	'GPS positioning time is not enough (The location payload reporting interval is set too short, please increase the report interval of the current working mode via MKLoRa app)',
+	'GPS aiding positioning timeout (Please adjust GPS autonomous latitude and autonomous longitude)',
+	'GPS cold start positioning timeout (The gps signal current environment isn’t very good, please leave the device in a more open area)',
+	'Interrupted by Downlink for Position',
+	'Interrupted positioning at start of movement(the movement ends too quickly, resulting in not enough time to complete the positioning)',
+	'Interrupted positioning at end of movement(the movement restarted too quickly, resulting in not enough time to complete the positioning)'
 ];
-const dev_mode = ["standby", "period", "timing", "motion"];
-const dev_fix_type = ["work_mode_fix", "down_request_fix"];
-function substringBytes(bytes, start, len) {
-  const char = [];
-  for (let i = 0; i < len; i++) {
-    char.push(`0x${bytes[start + i].toString(16)}` < 0x10 ? `0${bytes[start + i].toString(16)}` : bytes[start + i].toString(16));
-  }
-  return char.join("");
+var shutdownTypeArray = ['Bluetooth command to turn off the device', 'LoRaWAN command to turn off the device', 'Magnetic to turn off the device'];
+var eventTypeArray = [
+	'Start of movement',
+	'In movement',
+	'End of movement',
+	'Uplink Payload triggered by downlink message'
+];
+function Decoder(bytes, fPort, groupID) {
+	var payloadList = [];
+	var payload_type = payloadTypeArray[fPort - 1];
+	payloadList.push(getPayloadData('payload_type', payload_type, groupID));
+	if (fPort <= 10) {
+		var operationModeCode = bytes[0] & 0x03;
+		var operation_mode = operationModeArray[operationModeCode];
+		payloadList.push(getPayloadData('operation_mode', operation_mode, groupID));
+		var batteryLevelCode = bytes[0] & 0x04;
+		var battery_level = batteryLevelCode == 0 ? 'Normal' : 'Low battery';
+		payloadList.push(getPayloadData('battery_level', battery_level, groupID));
+		var tamperAlarmCode = bytes[0] & 0x08;
+		var tamper_alarm = tamperAlarmCode == 0 ? 'Not triggered' : 'Triggered';
+		payloadList.push(getPayloadData('tamper_alarm', tamper_alarm, groupID));
+		var manDownStatusCode = bytes[0] & 0x10;
+		var mandown_status = manDownStatusCode == 0 ? 'Not in idle' : 'In idle';
+		payloadList.push(getPayloadData('mandown_status', mandown_status, groupID));
+		var motionStateSinceLastPaylaodCode = bytes[0] & 0x20;
+		var motion_state_since_last_paylaod = motionStateSinceLastPaylaodCode == 0 ? 'No' : 'Yes';
+		payloadList.push(getPayloadData('motion_state_since_last_paylaod', motion_state_since_last_paylaod, groupID));
+		if (fPort == 2 || fPort == 3) {
+			var positioningTypeCode = bytes[0] & 0x40;
+			var positioning_type = positioningTypeCode == 0 ? 'Normal' : 'Downlink for position';
+			payloadList.push(getPayloadData('positioning_type', positioning_type, groupID));
+		}
+		var temperature = signedHexToInt(bytesToHexString(bytes, 1, 1)).toString() + '°C';
+		payloadList.push(getPayloadData('temperature', temperature, groupID));
+		var ack = bytes[2] & 0x0f;
+		payloadList.push(getPayloadData('ack', ack, groupID));
+		var battery_voltage = ((22 + ((bytes[2] >> 4) & 0x0f)) / 10).toString() + 'V';
+		payloadList.push(getPayloadData('battery_voltage', battery_voltage, groupID));
+	}
+	if (fPort == 1) {
+		var rebootReasonCode = bytesToInt(bytes, 3, 1);
+		// dev_info.reboot_reason_code = rebootReasonCode;
+		var reboot_reason = rebootReasonArray[rebootReasonCode];
+		payloadList.push(getPayloadData('reboot_reason', reboot_reason, groupID));
+		var majorVersion = (bytes[4] >> 6) & 0x03;
+		var minorVersion = (bytes[4] >> 4) & 0x03;
+		var patchVersion = bytes[4] & 0x0f;
+		var firmwareVersion = 'V' + majorVersion.toString() + '.' + minorVersion.toString() + '.' + patchVersion.toString();
+		var firmware_version = firmwareVersion;
+		payloadList.push(getPayloadData('firmware_version', firmware_version, groupID));
+		var activityCount = bytesToInt(bytes, 5, 4);
+		var activity_count = activityCount;
+		payloadList.push(getPayloadData('activity_count', activity_count, groupID));
+	}
+	else if (fPort == 2) {
+		var parse_len = 3; // common head is 3 byte
+		var positionTypeCode = bytes[parse_len++];
+		var position_success_type = positionTypeArray[positionTypeCode];
+		payloadList.push(getPayloadData('position_success_type', position_success_type, groupID));
+		var year = bytes[parse_len] * 256 + bytes[parse_len + 1];
+		parse_len += 2;
+		var mon = bytes[parse_len++];
+		var days = bytes[parse_len++];
+		var hour = bytes[parse_len++];
+		var minute = bytes[parse_len++];
+		var sec = bytes[parse_len++];
+		var timezone = bytes[parse_len++];
+		payloadList.push(getPayloadData('timezone', timezone, groupID));
+		var timestamp = '';
+		if (timezone > 0x80) {
+			timestamp = year.toString() + '-' + mon.toString() + '-' + days.toString() + ' ' + hour.toString() + ':' + minute.toString() + ':' + sec.toString()
+				+ '  TZ:' + (timezone - 0x100).toString();
+		}
+		else {
+			timestamp = year.toString() + '-' + mon.toString() + '-' + days.toString() + ' ' + hour.toString() + ':' + minute.toString() + ':'
+				+ sec.toString() + '  TZ:' + timezone.toString();
+		}
+		payloadList.push(getPayloadData('timestamp', timestamp, groupID));
+		var datalen = bytes[parse_len++];
+		if (positionTypeCode == 0 || positionTypeCode == 1) {
+			for (var i = 0; i < (datalen / 7); i++) {
+				var mac = bytesToHexString(bytes, parse_len, 6);
+				payloadList.push(getPayloadData('positioning_success_mac' + i.toString(), mac, groupID));
+				parse_len += 6;
+				var rssi = (bytes[parse_len++] - 256).toString() + 'dBm';
+				payloadList.push(getPayloadData('positioning_success_rssi' + i.toString(), rssi, groupID));
+			}
+		}
+		else {
+			var lat = bytesToInt(bytes, parse_len, 4);
+			parse_len += 4;
+			var lon = bytesToInt(bytes, parse_len, 4);
+			parse_len += 4;
+			if (lat > 0x80000000)
+				lat = lat - 0x100000000;
+			if (lon > 0x80000000)
+				lon = lon - 0x100000000;
+			var latitude = (lat / 10000000);
+			var longitude = (lon / 10000000);
+			var location_1 = {
+				'variable': 'location',
+				'value': 'My Address',
+				'location': {
+					'lat': latitude,
+					'lng': longitude,
+				},
+				'group': groupID,
+				'metadata': {
+					'color': '#add8e6'
+				},
+			};
+			payloadList.push(location_1);
+			var pdop_1 = (bytes[parse_len] / 10).toFixed(1).toString();
+			payloadList.push(getPayloadData('pdop', pdop_1, groupID));
+		}
+	}
+	else if (fPort == 3) {
+		var parse_len = 3;
+		var failedTypeCode = bytesToInt(bytes, parse_len++, 1);
+		var reasons_for_positioning_failure = posFailedReasonArray[failedTypeCode];
+		payloadList.push(getPayloadData('reasons_for_positioning_failure', reasons_for_positioning_failure, groupID));
+		var datalen = bytes[parse_len++];
+		if (failedTypeCode <= 5) //wifi and ble reason
+		{
+			if (datalen) {
+				for (var i = 0; i < (datalen / 7); i++) {
+					var mac = bytesToHexString(bytes, parse_len, 6);
+					payloadList.push(getPayloadData('positioning_success_mac' + i.toString(), mac, groupID));
+					parse_len += 6;
+					var rssi = (bytes[parse_len++] - 256).toString() + 'dBm';
+					payloadList.push(getPayloadData('positioning_success_rssi' + i.toString(), rssi, groupID));
+				}
+			}
+		}
+		else if (failedTypeCode <= 11) //gps reason
+		{
+			var pdop = '';
+			if (bytes[parse_len] != 0xff)
+				pdop = (bytes[parse_len] / 10).toString();
+			else
+				pdop = 'unknow';
+			payloadList.push(getPayloadData('pdop', pdop, groupID));
+			parse_len++;
+			var gps_satellite_cn = bytes[parse_len].toString() + '-' + bytes[parse_len + 1].toString() + '-' + bytes[parse_len + 2].toString() + '-' + bytes[parse_len + 3].toString();
+			payloadList.push(getPayloadData('gps_satellite_cn', gps_satellite_cn, groupID));
+		}
+	}
+	else if (fPort == 4) {
+		var shutdownTypeCode = bytesToInt(bytes, 3, 1);
+		var shutdown_type = shutdownTypeArray[shutdownTypeCode];
+		payloadList.push(getPayloadData('shutdown_type', shutdown_type, groupID));
+	}
+	else if (fPort == 5) {
+		var number_of_shocks = bytesToInt(bytes, 3, 2);
+		payloadList.push(getPayloadData('number_of_shocks', number_of_shocks, groupID));
+	}
+	else if (fPort == 6) {
+		var total_idle_time = bytesToInt(bytes, 3, 2);
+		payloadList.push(getPayloadData('total_idle_time', total_idle_time, groupID));
+	}
+	else if (fPort == 7) {
+		var parse_len = 3; // common head is 3 byte
+		var year = bytesToInt(bytes, parse_len, 1).toString();
+		parse_len += 2;
+		var mon = bytes[parse_len++].toString();
+		var days = bytes[parse_len++].toString();
+		var hour = bytes[parse_len++].toString();
+		var minute = bytes[parse_len++].toString();
+		var sec = bytes[parse_len++].toString();
+		var timezone = bytes[parse_len++];
+		payloadList.push(getPayloadData('timezone', timezone, groupID));
+		var timestamp = '';
+		if (timezone > 0x80) {
+			timestamp = year + '-' + mon + '-' + days + ' ' + hour + ':' + minute + ':' + sec + '  TZ:' + (timezone - 0x100);
+		}
+		else {
+			timestamp = year + '-' + mon + '-' + days + ' ' + hour + ':' + minute + ':' + sec + '  TZ:' + timezone;
+		}
+		payloadList.push(getPayloadData('timestamp', timestamp, groupID));
+	}
+	else if (fPort == 8) {
+		var eventTypeCode = bytesToInt(bytes, 3, 1);
+		var event_type = eventTypeArray[eventTypeCode];
+		payloadList.push(getPayloadData('event_type', event_type, groupID));
+	}
+	else if (fPort == 9) {
+		var parse_len = 3;
+		var gps_work_time = bytesToInt(bytes, parse_len, 4);
+		payloadList.push(getPayloadData('gps_work_time', gps_work_time, groupID));
+		parse_len += 4;
+		var wifi_work_time = bytesToInt(bytes, parse_len, 4);
+		payloadList.push(getPayloadData('wifi_work_time', wifi_work_time, groupID));
+		parse_len += 4;
+		var ble_scan_work_time = bytesToInt(bytes, parse_len, 4);
+		payloadList.push(getPayloadData('ble_scan_work_time', ble_scan_work_time, groupID));
+		parse_len += 4;
+		var ble_adv_work_time = bytesToInt(bytes, parse_len, 4);
+		payloadList.push(getPayloadData('ble_adv_work_time', ble_adv_work_time, groupID));
+		parse_len += 4;
+		var lora_work_time = bytesToInt(bytes, parse_len, 4);
+		payloadList.push(getPayloadData('lora_work_time', lora_work_time, groupID));
+		parse_len += 4;
+	}
+	else if (fPort == 12) {
+		var operationModeCode = bytes[0] & 0x03;
+		var operation_mode = operationModeArray[operationModeCode];
+		payloadList.push(getPayloadData('operation_mode', operation_mode, groupID));
+		var batteryLevelCode = bytes[0] & 0x04;
+		var battery_level = batteryLevelCode == 0 ? 'Normal' : 'Low battery';
+		payloadList.push(getPayloadData('battery_level', battery_level, groupID));
+		var tamperAlarmCode = bytes[0] & 0x08;
+		var tamper_alarm = tamperAlarmCode == 0 ? 'Not triggered' : 'Triggered';
+		payloadList.push(getPayloadData('tamper_alarm', tamper_alarm, groupID));
+		var manDownStatusCode = bytes[0] & 0x10;
+		var mandown_status = manDownStatusCode == 0 ? 'Not in idle' : 'In idle';
+		payloadList.push(getPayloadData('mandown_status', mandown_status, groupID));
+		var motionStateSinceLastPaylaodCode = bytes[0] & 0x20;
+		var motion_state_since_last_paylaod = motionStateSinceLastPaylaodCode == 0 ? 'No' : 'Yes';
+		payloadList.push(getPayloadData('motion_state_since_last_paylaod', motion_state_since_last_paylaod, groupID));
+		var positioningTypeCode = bytes[0] & 0x40;
+		var positioning_type = positioningTypeCode == 0 ? 'Normal' : 'Downlink for position';
+		payloadList.push(getPayloadData('positioning_type', positioning_type, groupID));
+		var lorawan_downlink_count = bytes[1] & 0x0f;
+		payloadList.push(getPayloadData('lorawan_downlink_count', lorawan_downlink_count, groupID));
+		var battery_voltage = ((22 + ((bytes[1] >> 4) & 0x0f)) / 10).toFixed(1).toString() + 'V';
+		payloadList.push(getPayloadData('battery_voltage', battery_voltage, groupID));
+		var parse_len = 2;
+		lat = bytesToInt(bytes, parse_len, 4);
+		parse_len += 4;
+		lon = bytesToInt(bytes, parse_len, 4);
+		parse_len += 4;
+		if (lat > 0x80000000)
+			lat = lat - 0x100000000;
+		if (lon > 0x80000000)
+			lon = lon - 0x100000000;
+		var latitude = lat / 10000000;
+		payloadList.push(getPayloadData('latitude', latitude, groupID));
+		var longitude = lon / 10000000;
+		payloadList.push(getPayloadData('longitude', longitude, groupID));
+		var pdop_2 = (bytes[parse_len] / 10).toFixed(1).toString();
+		payloadList.push(getPayloadData('pdop', pdop_2, groupID));
+	}
+	return payloadList;
 }
-function BytestoInt(bytes, start) {
-  const value = (bytes[start] << 24) | (bytes[start + 1] << 16) | (bytes[start + 2] << 8) | bytes[start + 3];
-  return value;
+/*
+	整型数组指定部分转换成对应的Hex字符串
+	bytes:里面全部为整数,
+	start:开始转换的位置
+	len:需要转换的长度
+*/
+function bytesToHexString(bytes, start, len) {
+	if (bytes.length == 0 || start >= bytes.length || (start + len) > bytes.length)
+		return '';
+	var hexStr = '';
+	for (var i = 0; i < len; i++) {
+		var tempBytes = bytes[start + i];
+		var data = tempBytes.toString(16);
+		if (tempBytes < 16) {
+			data = '0' + data;
+		}
+		hexStr += data;
+	}
+	return hexStr;
 }
-function Decoder(bytes, port) {
-  const dev_info = {};
-  dev_info.pack_type = packet_type[port - 1];
-  // common frame head
-  if (port <= 10) {
-    dev_info.work_mode = dev_mode[bytes[0] & 0x03];
-    dev_info.low_power_state = (bytes[0] >> 2) & 0x01;
-    dev_info.demolish_state = (bytes[0] >> 3) & 0x01;
-    dev_info.idle_state = (bytes[0] >> 4) & 0x01;
-    dev_info.motion_state = (bytes[0] >> 5) & 0x01;
-    if (port === 2 || port === 3) {
-      dev_info.fix_type = dev_fix_type[(bytes[0] >> 6) & 0x01];
-    }
-
-    if (bytes[1] > 0x80) {
-      dev_info.temperature = `${bytes[1] - 0x100}°C`;
-    } else {
-      dev_info.temperature = `${bytes[1]}°C`;
-    }
-
-    dev_info.lorawan_downlink_count = bytes[2] & 0x0f;
-    dev_info.battery_voltage = `${(22 + ((bytes[2] >> 4) & 0x0f)) / 10}V`;
-  }
-  if (port === 1) {
-    const restart_reason = ["power_restart", "ble_cmd_restart", "lorawan_cmd_restart", "switch_off_mode_restart"];
-    dev_info.pre_restart_reason = restart_reason[bytes[3]];
-
-    const ver_major = (bytes[4] >> 6) & 0x03;
-    const ver_mijor = (bytes[4] >> 4) & 0x03;
-    const ver_patch = bytes[4] & 0x0f;
-    dev_info.ver = `V${ver_major}.${ver_mijor}.${ver_patch}`;
-
-    dev_info.motion_count = BytestoInt(bytes, 5);
-  } else if (port === 2) {
-    const fix_tech = ["wifi", "ble", "gps"];
-    let parse_len = 3; // common head is 3 byte
-    const datas = [];
-    const tech = bytes[parse_len++];
-    dev_info.fix_tech = fix_tech[tech];
-
-    const year = bytes[parse_len] * 256 + bytes[parse_len + 1];
-    parse_len += 2;
-    const mon = bytes[parse_len++];
-    const days = bytes[parse_len++];
-    const hour = bytes[parse_len++];
-    const minute = bytes[parse_len++];
-    const sec = bytes[parse_len++];
-    const timezone = bytes[parse_len++];
-
-    if (timezone > 0x80) {
-      dev_info.utc_time = `${year}-${mon}-${days} ${hour}:${minute}:${sec}  TZ:${timezone - 0x100}`;
-    } else {
-      dev_info.utc_time = `${year}-${mon}-${days} ${hour}:${minute}:${sec}  TZ:${timezone}`;
-    }
-    const datalen = bytes[parse_len++];
-
-    if (tech === 0 || tech === 1) {
-      for (let i = 0; i < datalen / 7; i++) {
-        const data = {};
-        data.mac = substringBytes(bytes, parse_len, 6);
-        parse_len += 6;
-        data.rssi = `${bytes[parse_len++] - 256}dBm`;
-        datas.push(data);
-      }
-      dev_info.mac_data = datas;
-    } else {
-      let lat = BytestoInt(bytes, parse_len);
-      parse_len += 4;
-      let lng = BytestoInt(bytes, parse_len);
-      parse_len += 4;
-
-      if (lat > 0x80000000) lat -= 0x100000000;
-      if (lng > 0x80000000) lng -= 0x100000000;
-
-      dev_info.lat = lat / 10000000;
-      dev_info.lng = lng / 10000000;
-      lat = dev_info.lat;
-      lng = dev_info.lng;
-      dev_info.location = { variable: "location", value: `${lat},${lng}`, location: { lat, lng } };
-      dev_info.pdop = bytes[parse_len] / 10;
-    }
-  } else if (port === 3) {
-    const fix_false_reason = [
-      "wifi_fix_time_timeout",
-      "wifi_fix_tech_timeout",
-      "wifi_module_nofind",
-      "ble_fix_time_timeout",
-      "ble_fix_tech_timeout",
-      "ble_adv",
-      "gps_no_budget",
-      "gps_coarse_acc_timeout",
-      "gps_fine_acc_timeout",
-      "gps_fix_timeout",
-      "gps_assistnow_timeout",
-      "gps_cold_start_timeout",
-      "down_request_fix_interrupt",
-      "motion_start_fix_false_by_motion_end",
-      "motion_end_fix_false_by_motion_start",
-    ];
-    let parse_len = 3;
-    const datas = [];
-    const reason = bytes[parse_len++];
-    dev_info.fix_false_reason = fix_false_reason[reason];
-    const datalen = bytes[parse_len++];
-    if (reason <= 5) {
-      // wifi and ble reason
-      if (datalen) {
-        for (let i = 0; i < datalen / 7; i++) {
-          const data = {};
-          data.mac = substringBytes(bytes, parse_len, 6);
-          parse_len += 6;
-          data.rssi = `${bytes[parse_len++] - 256}dBm`;
-          datas.push(data);
-        }
-        dev_info.mac_data = datas;
-      }
-    } else if (reason <= 11) {
-      // gps reason
-      const pdop = bytes[parse_len++];
-      if (pdop !== 0xff) dev_info.pdop = pdop / 10;
-      else dev_info.pdop = "unknow";
-      dev_info.gps_satellite_cn = `${bytes[parse_len]}-${bytes[parse_len + 1]}-${bytes[parse_len + 2]}-${bytes[parse_len + 3]}`;
-    }
-  } else if (port === 4) {
-    const sys_close_reason = ["ble_cmd_close", "lorawan_cmd_close", "reed_switch_close"];
-    dev_info.sys_close_reason = sys_close_reason[bytes[3]];
-  } else if (port === 5) {
-    dev_info.shake_num = bytes[3] * 256 + bytes[4];
-  } else if (port === 6) {
-    dev_info.idle_time = bytes[3] * 256 + bytes[4];
-  } else if (port === 7) {
-    let parse_len = 3; // common head is 3 byte
-    const year = bytes[parse_len] * 256 + bytes[parse_len + 1];
-    parse_len += 2;
-    const mon = bytes[parse_len++];
-    const days = bytes[parse_len++];
-    const hour = bytes[parse_len++];
-    const minute = bytes[parse_len++];
-    const sec = bytes[parse_len++];
-    const timezone = bytes[parse_len++];
-
-    if (timezone > 0x80) {
-      dev_info.alarm_time = `${year}-${mon}-${days} ${hour}:${minute}:${sec}  TZ:${timezone - 0x100}`;
-    } else {
-      dev_info.alarm_time = `${year}-${mon}-${days} ${hour}:${minute}:${sec}  TZ:${timezone}`;
-    }
-  } else if (port === 8) {
-    const event = ["motion start", "moving fix start", "motion end", "lorawan downlink trigger uplink"];
-    dev_info.event_info = event[bytes[3]];
-  } else if (port === 9) {
-    let parse_len = 3;
-    dev_info.gps_work_time = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-    dev_info.wifi_work_time = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-    dev_info.ble_scan_work_time = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-    dev_info.ble_adv_work_time = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-    dev_info.lorawan_work_time = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-  } else if (port === 10) {
-    //
-  } else if (port === 11) {
-    //
-  } else if (port === 12) {
-    dev_info.work_mode = dev_mode[bytes[0] & 0x03];
-    dev_info.low_power_state = bytes[0] & 0x04;
-    dev_info.demolish_state = bytes[0] & 0x08;
-    dev_info.idle_state = bytes[0] & 0x10;
-    dev_info.motion_state = bytes[0] & 0x20;
-    dev_info.fix_type = dev_fix_type[(bytes[0] >> 6) & 0x01];
-
-    dev_info.lorawan_downlink_count = bytes[1] & 0x0f;
-    dev_info.battery_voltage = `${(22 + ((bytes[2] >> 4) & 0x0f)) / 10}V`;
-
-    let parse_len = 2;
-    let lat = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-    let lng = BytestoInt(bytes, parse_len);
-    parse_len += 4;
-
-    if (lat > 0x80000000) lat -= 0x100000000;
-    if (lng > 0x80000000) lng -= 0x100000000;
-
-    dev_info.lat = lat / 10000000;
-    dev_info.lng = lng / 10000000;
-    lat = dev_info.lat;
-    lng = dev_info.lng;
-    dev_info.location = { variable: "location", value: `${lat},${lng}`, location: { lat, lng } };
-    dev_info.pdop = bytes[parse_len] / 10;
-  }
-  return dev_info;
+/*
+	整型数组指定部分十六进制转换成对应的10进制整数
+	bytes:里面全部为整数,
+	start:开始转换的位置
+	len:需要转换的长度
+*/
+function bytesToInt(bytes, start, len) {
+	if (bytes.length == 0 || start >= bytes.length || (start + len) > bytes.length)
+		return 0;
+	var value = 0;
+	for (var i = 0; i < len; i++) {
+		var m = ((len - 1) - i) * 8;
+		value = value | bytes[start + i] << m;
+	}
+	return value;
 }
-
-function ToTagoFormat(object_item, serie, prefix = "") {
-  const result = [];
-  for (const key in object_item) {
-    if (typeof object_item[key] === "object") {
-      result.push({
-        variable: (object_item[key].MessageType || `${prefix}${key}`).toLowerCase(),
-        value: object_item[key].value || object_item[key].Value,
-        serie: object_item[key].serie || serie,
-        metadata: object_item[key].metadata,
-        unit: object_item[key].unit,
-        location: object_item[key].location,
-      });
-    } else {
-      result.push({
-        variable: `${prefix}${key}`.toLowerCase(),
-        value: object_item[key],
-        serie,
-      });
-    }
-  }
-  return result;
+function timezone_decode(tz) {
+	var tz_str = 'UTC';
+	tz = tz > 128 ? tz - 256 : tz;
+	if (tz < 0) {
+		tz_str += '-';
+		tz = -tz;
+	}
+	else {
+		tz_str += '+';
+	}
+	if (tz < 20) {
+		tz_str += '0';
+	}
+	tz_str += String(tz / 2);
+	tz_str += ':';
+	if (tz % 2) {
+		tz_str += '30';
+	}
+	else {
+		tz_str += '00';
+	}
+	return tz_str;
 }
-
-const payload_raw = payload.find((x) => x.variable === "payload_raw" || x.variable === "payload" || x.variable === "data");
-
-// Get the port variable.
-const port = payload.find((x) => x.variable === "port" || x.variable === "fport").value;
-
-if (payload_raw) {
-  try {
-    // Convert the data from Hex to Javascript Buffer.
-    const buffer = Buffer.from(payload_raw.value, "hex");
-    const serie = new Date().getTime();
-    const payload_aux = ToTagoFormat(Decoder(buffer, port), serie);
-    payload = payload.concat(payload_aux.map((x) => ({ ...x, serie })));
-  } catch (e) {
-    // Print the error to the Live Inspector.
-    console.error(e);
-    // Return the variable parse_error for debugging.
-    payload = [{ variable: "parse_error", value: e.message }];
-  }
+function parse_time(timestamp, timezone) {
+	timezone = timezone > 64 ? timezone - 128 : timezone;
+	timestamp = timestamp + timezone * 3600;
+	if (timestamp < 0) {
+		timestamp = 0;
+	}
+	var d = new Date(timestamp * 1000);
+	//d.setUTCSeconds(1660202724);
+	var time_str = '';
+	time_str += d.getUTCFullYear();
+	time_str += '-';
+	time_str += formatNumber(d.getUTCMonth() + 1);
+	time_str += '-';
+	time_str += formatNumber(d.getUTCDate());
+	time_str += ' ';
+	time_str += formatNumber(d.getUTCHours());
+	time_str += ':';
+	time_str += formatNumber(d.getUTCMinutes());
+	time_str += ':';
+	time_str += formatNumber(d.getUTCSeconds());
+	return time_str;
+}
+function formatNumber(number) {
+	return number < 10 ? '0' + number.toString() : number.toString();
+}
+/*
+	有符号十六进制字符串转十进制
+*/
+function signedHexToInt(hexStr) {
+	var twoStr = parseInt(hexStr, 16).toString(2); // 将十六转十进制，再转2进制
+	// console.log(twoStr);
+	var bitNum = hexStr.length * 4; // 1个字节 = 8bit ，0xff 一个 'f'就是4位
+	if (twoStr.length < bitNum) {
+		while (twoStr.length < bitNum) {
+			twoStr = '0' + twoStr;
+		}
+	}
+	if (twoStr.substring(0, 1) == '0') {
+		// 正数
+		return parseInt(twoStr, 2); // 二进制转十进制
+	}
+	// 负数
+	var twoStr_unsign = '';
+	var tempValue = parseInt(twoStr, 2) - 1; // 补码：(负数)反码+1，符号位不变；相对十进制来说也是 +1，但这里是负数，+1就是绝对值数据-1
+	twoStr_unsign = tempValue.toString(2).substring(1, bitNum); // 舍弃首位(符号位)
+	// 去除首字符，将0转为1，将1转为0   反码
+	twoStr_unsign = twoStr_unsign.replace(/0/g, 'z');
+	twoStr_unsign = twoStr_unsign.replace(/1/g, '0');
+	twoStr_unsign = twoStr_unsign.replace(/z/g, '1');
+	return parseInt('-' + twoStr_unsign, 2);
+}
+function getPayloadData(type, value, groupID) {
+	return {
+		'variable': type,
+		'value': value,
+		'group': groupID,
+	};
+}
+var payloadd = payload.find(function (x) { return ["payload_raw", "payload", "data"].includes(x.variable); });
+var portt = payload.find(function (x) { return ["port", "fport", "f_port"].includes(x.variable); });
+if (payloadd.value && portt.value) {
+	try {
+		// Convert the data from Hex to Javascript Buffer.
+		var buffer = hexToNumberArray(payloadd.value);
+		// payload.push(...Decoder(buffer, port.value, payload_raw.group));
+		payload = payload.concat(Decoder(buffer, portt.value, payloadd.group));
+	}
+	catch (e) {
+		// Print the error to the Live Inspector.
+		console.error(e);
+		// Return the variable parse_error for debugging.
+		// payload = [{ variable: 'parse_error', value: e.message }];
+	}
+}
+function hexToNumberArray(hexString) {
+	var buffer = Buffer.from(hexString, 'hex');
+	return Array.from(buffer, function (byte) { return byte; });
 }
